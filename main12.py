@@ -3,6 +3,8 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 import logging
 import asyncio
 
+#new eddit
+
 # تنظیمات لاگ‌گیری
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
