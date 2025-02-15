@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # اطلاعات بات و کانال‌ها
 BOT_TOKEN = "8164630657:AAGcf35y3u6SbHDegxZCVKtKSNsL4B7OS0g"
 STORAGE_CHANNEL = -1002463367628  # جایگزین با آیدی عددی کانال خصوصی
-REQUIRED_CHANNELS = ["@Rock_Guys", "@Ami9music"]
+REQUIRED_CHANNELS = ["@Rock_Guys", "@kcrang"]
 
 # Use the same salt and configuration as Bot 1
 hashids = Hashids(salt="Admiral23", min_length=6)
