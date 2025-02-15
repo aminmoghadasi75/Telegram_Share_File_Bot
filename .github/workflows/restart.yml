@@ -2,26 +2,26 @@ name: Control Railway Deployment
 
 on:
   schedule:
-    - cron: "30 6 * * *"  # Start bot every day at 6:30 AM UTC (10:00 AM IRST)
-    - cron: "30 0 * * *"  # Stop bot every day at 12:30 AM UTC (4:00 AM IRST)
+    - cron: "30 6 * * *"  # Start bot at 6:30 AM UTC (10:00 AM IRST)
+    - cron: "30 0 * * *"  # Stop bot at 12:30 AM UTC (4:00 AM IRST)
   workflow_dispatch:  # Allows manual triggering
 
 jobs:
   control-railway:
     runs-on: ubuntu-latest
     steps:
-      - name: Start Railway Deployment
-        if: ${{ github.event_name == 'schedule' && startsWith(github.event.schedule, '30 6') }}
+      - name: Start Railway Service
+        if: github.event.schedule == '30 6 * * *'
         run: |
           curl -X POST "https://backboard.railway.app/graphql/v2" \
           -H "Authorization: Bearer ${{ secrets.RAILWAY_API_TOKEN }}" \
           -H "Content-Type: application/json" \
-          -d '{"query":"mutation { deploymentCreate(input: {projectId: \"${{ secrets.RAILWAY_PROJECT_ID }}\"}) { id } }"}'
+          --data '{"query":"mutation { serviceStart(id: \"${{ secrets.RAILWAY_SERVICE_ID }}\") { id } }"}'
 
-      - name: Stop Railway Deployment
-        if: ${{ github.event_name == 'schedule' && startsWith(github.event.schedule, '30 0') }}
+      - name: Stop Railway Service
+        if: github.event.schedule == '30 0 * * *'
         run: |
           curl -X POST "https://backboard.railway.app/graphql/v2" \
           -H "Authorization: Bearer ${{ secrets.RAILWAY_API_TOKEN }}" \
           -H "Content-Type: application/json" \
-          -d '{"query":"mutation { serviceUpdate(input: {id: \"${{ secrets.RAILWAY_SERVICE_ID }}\", autostart: false, numInstances: 0 }) { id } }"}'
+          --data '{"query":"mutation { serviceStop(id: \"${{ secrets.RAILWAY_SERVICE_ID }}\") { id } }"}'
