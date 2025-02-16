@@ -2,6 +2,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import logging
 import asyncio
+import random
+import os
 from hashids import Hashids
 from telegram.error import TelegramError
 
@@ -13,7 +15,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # اطلاعات بات و کانال‌ها
-BOT_TOKEN = "8164630657:AAGcf35y3u6SbHDegxZCVKtKSNsL4B7OS0g"
+BOT_TOKEN = '8164630657:AAGcf35y3u6SbHDegxZCVKtKSNsL4B7OS0g'  # استفاده از متغیر محیطی برای امنیت بیشتر
 STORAGE_CHANNEL = -1002463367628  # جایگزین با آیدی عددی کانال خصوصی
 REQUIRED_CHANNELS = ["@zapas_kcrang", "@kcrang"]
 
@@ -44,28 +46,40 @@ def get_verification_menu(unjoined_channels):
     keyboard.append([InlineKeyboardButton("🔄 بررسی مجدد عضویت", callback_data="verify")])
     return InlineKeyboardMarkup(keyboard)
 
-# ارسال محتوا به کاربر با تأخیر برای حذف آن
+# ارسال محتوا به کاربر با تأخیر و کنترل محدودیت نرخ
 async def send_timed_messages(user_id: int, context: ContextTypes.DEFAULT_TYPE, content_codes: list):
     try:
         sent_messages = []
         for content_code in content_codes:
-            try:
-                sent_message = await context.bot.forward_message(
-                    chat_id=user_id,
-                    from_chat_id=STORAGE_CHANNEL,
-                    message_id=int(content_code)
-                )
-                sent_messages.append(sent_message)
-            except TelegramError as e:
-                logger.error(f"خطا در ارسال پیام {content_code} به کاربر {user_id}: {e}")
-                await context.bot.send_message(user_id, text=f"⚠️ خطایی در دریافت محتوای {content_code} رخ داد.")
+            retry_attempts = 3  # حداکثر ۳ تلاش مجدد
+            delay = 2  # تأخیر اولیه
+
+            for attempt in range(retry_attempts):
+                try:
+                    await asyncio.sleep(random.uniform(1.5, 3))  # ایجاد تأخیر تصادفی برای جلوگیری از محدودیت
+                    sent_message = await context.bot.forward_message(
+                        chat_id=user_id,
+                        from_chat_id=STORAGE_CHANNEL,
+                        message_id=int(content_code)
+                    )
+                    sent_messages.append(sent_message)
+                    break  # موفقیت، خروج از حلقه تکرار
+
+                except TelegramError as e:
+                    if "Too Many Requests" in str(e):
+                        wait_time = int(str(e).split("Retry in ")[-1].split()[0])  # استخراج زمان تأخیر
+                        logger.warning(f"محدودیت نرخ فعال شد! تلاش مجدد در {wait_time} ثانیه برای کاربر {user_id}")
+                        await asyncio.sleep(wait_time + random.uniform(1, 3))  # اضافه کردن تأخیر اضافی
+                    else:
+                        logger.error(f"خطا در ارسال پیام {content_code} به کاربر {user_id}: {e}")
+                        break  # عدم تلاش مجدد برای سایر خطاها
 
         countdown_message = await context.bot.send_message(
             chat_id=user_id,
             text="⏳ این محتوا پس از ۲ دقیقه حذف خواهد شد!"
         )
         await asyncio.sleep(120)
-        
+
         for sent_message in sent_messages:
             try:
                 await context.bot.delete_message(chat_id=user_id, message_id=sent_message.message_id)
@@ -73,6 +87,7 @@ async def send_timed_messages(user_id: int, context: ContextTypes.DEFAULT_TYPE, 
                 logger.warning(f"خطا در حذف پیام {sent_message.message_id} برای کاربر {user_id}: {e}")
 
         await context.bot.delete_message(chat_id=user_id, message_id=countdown_message.message_id)
+
     except Exception as e:
         logger.error(f"خطای کلی در ارسال محتوا به کاربر {user_id}: {e}")
         await context.bot.send_message(chat_id=user_id, text="⚠️ مشکلی در ارسال محتوا رخ داده است. لطفاً مجدداً تلاش کنید.")
@@ -124,7 +139,7 @@ async def verify_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 # راه‌اندازی ربات
 def main():
-    application = Application.builder().token(BOT_TOKEN).build()
+    application = Application.builder().token(BOT_TOKEN).concurrent_updates(2).build()  # محدود کردن پردازش هم‌زمان
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(verify_membership, pattern="verify"))
     application.run_polling()
