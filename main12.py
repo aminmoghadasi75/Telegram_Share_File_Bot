@@ -49,6 +49,9 @@ def get_verification_menu(unjoined_channels):
 # ارسال محتوا به کاربر با تأخیر و کنترل محدودیت نرخ
 async def send_timed_messages(user_id: int, context: ContextTypes.DEFAULT_TYPE, content_codes: list):
     try:
+        # Display the initial message
+        await context.bot.send_message(chat_id=user_id, text="📩 محتوای شما در حال ارسال است...")
+
         sent_messages = []
         for content_code in content_codes:
             retry_attempts = 3  # حداکثر ۳ تلاش مجدد
@@ -74,11 +77,12 @@ async def send_timed_messages(user_id: int, context: ContextTypes.DEFAULT_TYPE, 
                         logger.error(f"خطا در ارسال پیام {content_code} به کاربر {user_id}: {e}")
                         break  # عدم تلاش مجدد برای سایر خطاها
 
+        # Display the countdown message after all content is sent
         countdown_message = await context.bot.send_message(
             chat_id=user_id,
-            text="⏳ این محتوا پس از ۲ دقیقه حذف خواهد شد!"
+            text="⏳ این محتوا پس از 500 ثانیه حذف خواهد شد!"
         )
-        await asyncio.sleep(120)
+        await asyncio.sleep(500)
 
         for sent_message in sent_messages:
             try:
