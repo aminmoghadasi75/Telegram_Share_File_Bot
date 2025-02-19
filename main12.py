@@ -3,9 +3,9 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 import logging
 import asyncio
 import random
-import os
 from hashids import Hashids
 from telegram.error import TelegramError
+from collections import deque
 
 # تنظیمات لاگ‌گیری
 logging.basicConfig(
@@ -25,6 +25,9 @@ hashids = Hashids(salt="Admiral23", min_length=6)
 # تنظیمات محدودیت نرخ
 RATE_LIMIT = 20  # حداکثر ۲۰ پیام در دقیقه (مطابق محدودیت تلگرام)
 semaphore = asyncio.Semaphore(RATE_LIMIT // 2)  # کنترل همزمانی
+
+# صف برای مدیریت ارسال پیام‌ها
+message_queue = deque()
 
 def decode_movie_token(token: str) -> list:
     """Decode token into list of message IDs"""
@@ -53,11 +56,11 @@ def get_verification_menu(unjoined_channels):
 # ارسال محتوا با تلاش مجدد و مدیریت محدودیت نرخ
 async def send_with_retry(context, content_code, user_id):
     backoff = 1
-    max_retries = 5
-    for _ in range(max_retries):
+    max_retries = 10  # افزایش تعداد تلاش‌ها
+    for attempt in range(max_retries):
         try:
             async with semaphore:
-                await asyncio.sleep(random.uniform(0.1, 0.5))
+                await asyncio.sleep(random.uniform(0.1, 0.5))  # تأخیر تصادفی
                 return await context.bot.forward_message(
                     chat_id=user_id,
                     from_chat_id=STORAGE_CHANNEL,
@@ -65,13 +68,22 @@ async def send_with_retry(context, content_code, user_id):
                 )
         except TelegramError as e:
             if "Too Many Requests" in str(e):
-                wait = int(str(e).split()[-2])
+                wait = int(str(e).split()[-2]) if "Retry in" in str(e) else 5
                 await asyncio.sleep(wait + backoff)
-                backoff *= 2
+                backoff *= 2  # افزایش تأخیر به صورت تصاعدی
             else:
-                logger.error(f"ارسال ناموفق {content_code}: {e}")
+                if attempt == max_retries - 1:  # فقط در آخرین تلاش خطا را لاگ کنید
+                    logger.warning(f"ارسال ناموفق {content_code} پس از {max_retries} تلاش: {e}")
                 break
     return None
+
+# پردازش صف پیام‌ها
+async def process_message_queue():
+    while True:
+        if message_queue:
+            user_id, context, content_codes = message_queue.popleft()
+            await send_timed_messages(user_id, context, content_codes)
+        await asyncio.sleep(1)  # تأخیر بین پردازش پیام‌ها
 
 # ارسال محتوا به کاربر با تأخیر و کنترل محدودیت نرخ
 async def send_timed_messages(user_id: int, context: ContextTypes.DEFAULT_TYPE, content_codes: list):
@@ -81,7 +93,7 @@ async def send_timed_messages(user_id: int, context: ContextTypes.DEFAULT_TYPE, 
         sent_messages = [msg for msg in sent_messages if msg]
 
         if not sent_messages:
-            await context.bot.send_message(user_id, "⚠️ خطا در ارسال محتوا")
+            logger.warning(f"⚠️ خطا در ارسال محتوا به کاربر {user_id}")
             return
 
         countdown = await context.bot.send_message(user_id, "⏳ این محتوا پس از 5 دقیقه حذف خواهد شد!")
@@ -89,13 +101,14 @@ async def send_timed_messages(user_id: int, context: ContextTypes.DEFAULT_TYPE, 
 
         # حذف پیام‌ها
         for msg in sent_messages:
-            try: await context.bot.delete_message(user_id, msg.message_id)
-            except: pass
+            try:
+                await context.bot.delete_message(user_id, msg.message_id)
+            except TelegramError as e:
+                logger.warning(f"خطا در حذف پیام {msg.message_id} برای کاربر {user_id}: {e}")
         await countdown.delete()
 
     except Exception as e:
-        logger.error(f"خطای کلی: {e}")
-        await context.bot.send_message(user_id, "⚠️ خطا در پردازش")
+        logger.error(f"خطای کلی در ارسال محتوا به کاربر {user_id}: {e}")
 
 # دستور /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -113,7 +126,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not unjoined_channels:
             if content_codes:
                 await update.message.reply_text("📩 محتوا در حال ارسال...")
-                await send_timed_messages(user.id, context, content_codes)
+                message_queue.append((user.id, context, content_codes))  # اضافه کردن به صف
             else:
                 await update.message.reply_text("✅ خوش آمدید! برای دریافت رسانه، از لینک‌های محتوایی استفاده کنید.")
         else:
@@ -155,6 +168,10 @@ def main():
     )
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(verify_membership, pattern="verify"))
+    
+    # شروع پردازش صف پیام‌ها
+    asyncio.create_task(process_message_queue())
+    
     application.run_polling()
 
 if __name__ == '__main__':
