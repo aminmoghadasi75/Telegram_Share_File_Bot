@@ -58,12 +58,6 @@ async def send_with_retry(context, content_code, user_id):
         try:
             async with semaphore:
                 await asyncio.sleep(random.uniform(0.1, 0.5))
-                # First send the description
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text="@KcRang مرجع تخصصی نود @KcRang"
-                )
-                # Then forward the content
                 return await context.bot.forward_message(
                     chat_id=user_id,
                     from_chat_id=STORAGE_CHANNEL,
