@@ -6,6 +6,9 @@ import random
 import os
 from hashids import Hashids
 from telegram.error import TelegramError
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # تنظیمات لاگ‌گیری
 logging.basicConfig(
@@ -15,12 +18,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # اطلاعات بات و کانال‌ها
-BOT_TOKEN = '8164630657:AAGcf35y3u6SbHDegxZCVKtKSNsL4B7OS0g'  # استفاده از متغیر محیطی برای امنیت بیشتر
-STORAGE_CHANNEL = -1002463367628  # جایگزین با آیدی عددی کانال خصوصی
-REQUIRED_CHANNELS = ["@zapas_kcrang", "@kcrang"]
+BOT_TOKEN = os.getenv("BOT1_TOKEN")  
+STORAGE_CHANNEL = os.getenv("STORAGE_CHANNEL")  
+REQUIRED_CHANNELS = os.getenv("REQUIRED_CHANNELS")
+salt = os.getenv("salt")
 
 # Use the same salt and configuration as Bot 1
-hashids = Hashids(salt="Admiral23", min_length=6)
+hashids = Hashids(salt=salt, min_length=6)
 
 # تنظیمات محدودیت نرخ
 RATE_LIMIT = 20  # حداکثر ۲۰ پیام در دقیقه (مطابق محدودیت تلگرام)
