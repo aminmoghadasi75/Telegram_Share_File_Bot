@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("BOT1_TOKEN", "").strip()  
 STORAGE_CHANNEL = int(os.getenv("STORAGE_CHANNEL", "0").strip('"'))  
 REQUIRED_CHANNELS = os.getenv("REQUIRED_CHANNELS", "").split(",")
-salt = os.getenv("salt")
+salt = os.getenv("salt", "").strip()
 
 # Use the same salt and configuration as Bot 1
 hashids = Hashids(salt=salt, min_length=6)
