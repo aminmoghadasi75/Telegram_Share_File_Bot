@@ -18,12 +18,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # اطلاعات بات و کانال‌ها
-BOT_TOKEN = os.getenv("BOT1_TOKEN", "").strip()  
-STORAGE_CHANNEL = int(os.getenv("STORAGE_CHANNEL", "0").strip('"'))  
+BOT_TOKEN = os.getenv("BOT1_TOKEN", "").strip()
+STORAGE_CHANNEL = int(os.getenv("STORAGE_CHANNEL", "0").strip('"'))
 REQUIRED_CHANNELS = os.getenv("REQUIRED_CHANNELS", "").split(",")
 salt = os.getenv("salt", "").strip()
 
-# Use the same salt and configuration as Bot 1
 hashids = Hashids(salt=salt, min_length=6)
 
 # تنظیمات محدودیت نرخ
@@ -32,10 +31,8 @@ semaphore = asyncio.Semaphore(RATE_LIMIT // 2)  # کنترل همزمانی
 
 def decode_movie_token(token: str) -> list:
     """Decode token into list of message IDs"""
-    decoded = hashids.decode(token)
-    return list(decoded) if decoded else []
+    return list(hashids.decode(token))
 
-# تابع بررسی عضویت کاربر
 async def get_unjoined_channels(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     unjoined_channels = []
     for channel in REQUIRED_CHANNELS:
@@ -48,13 +45,11 @@ async def get_unjoined_channels(user_id: int, context: ContextTypes.DEFAULT_TYPE
             unjoined_channels.append(channel)
     return unjoined_channels
 
-# تابع ایجاد دکمه‌های عضویت و تأیید
 def get_verification_menu(unjoined_channels):
     keyboard = [[InlineKeyboardButton(f"✅ عضویت در {ch}", url=f"https://t.me/{ch[1:]}")] for ch in unjoined_channels]
     keyboard.append([InlineKeyboardButton("🔄 بررسی مجدد عضویت", callback_data="verify")])
     return InlineKeyboardMarkup(keyboard)
 
-# ارسال محتوا با تلاش مجدد و مدیریت محدودیت نرخ
 async def send_with_retry(context, content_code, user_id):
     backoff = 1
     max_retries = 5
@@ -72,36 +67,36 @@ async def send_with_retry(context, content_code, user_id):
                 wait = int(str(e).split()[-2])
                 await asyncio.sleep(wait + backoff)
                 backoff *= 2
+            elif "message to forward not found" in str(e):
+                logger.error(f"Message {content_code} not found.")
+                return None
             else:
-                logger.error(f"ارسال ناموفق {content_code}: {e}")
-                break
+                logger.error(f"Failed to send {content_code}: {e}")
+                return None
     return None
 
-# ارسال محتوا به کاربر با تأخیر و کنترل محدودیت نرخ
 async def send_timed_messages(user_id: int, context: ContextTypes.DEFAULT_TYPE, content_codes: list):
-    try:
-        tasks = [send_with_retry(context, code, user_id) for code in content_codes]
-        sent_messages = await asyncio.gather(*tasks)
-        sent_messages = [msg for msg in sent_messages if msg]
+    sent_messages = []
+    for code in content_codes:
+        msg = await send_with_retry(context, code, user_id)
+        if msg:
+            sent_messages.append(msg)
+        await asyncio.sleep(0.5)
 
-        if not sent_messages:
-            await context.bot.send_message(user_id, "⚠️ خطا در ارسال محتوا")
-            return
+    if not sent_messages:
+        await context.bot.send_message(user_id, "⚠️ خطا در ارسال محتوا")
+        return
+    
+    countdown = await context.bot.send_message(user_id, "⏳ این محتوا پس از 5 دقیقه حذف خواهد شد!")
+    await asyncio.sleep(300)
 
-        countdown = await context.bot.send_message(user_id, "⏳ این محتوا پس از 5 دقیقه حذف خواهد شد!")
-        await asyncio.sleep(300)
+    for msg in sent_messages:
+        try:
+            await context.bot.delete_message(user_id, msg.message_id)
+        except:
+            pass
+    await countdown.delete()
 
-        # حذف پیام‌ها
-        for msg in sent_messages:
-            try: await context.bot.delete_message(user_id, msg.message_id)
-            except: pass
-        await countdown.delete()
-
-    except Exception as e:
-        logger.error(f"خطای کلی: {e}")
-        await context.bot.send_message(user_id, "⚠️ خطا در پردازش")
-
-# دستور /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     args = context.args if context.args else []
@@ -112,6 +107,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             decoded_ids = decode_movie_token(token)
             content_codes.extend(str(id) for id in decoded_ids)
     
+    logger.info(f"Decoded content IDs for user {user.id}: {content_codes}")
+
     try:
         unjoined_channels = await get_unjoined_channels(user.id, context)
         if not unjoined_channels:
@@ -129,7 +126,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.error(f"خطا در پردازش دستور /start برای کاربر {user.id}: {e}")
         await update.message.reply_text("⚠️ مشکلی رخ داده است. لطفاً دوباره تلاش کنید.")
 
-# بررسی عضویت از طریق دکمه تأیید
 async def verify_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -146,12 +142,11 @@ async def verify_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         logger.error(f"خطا در بررسی عضویت کاربر {query.from_user.id}: {e}")
         await query.edit_message_text("⚠️ مشکلی در بررسی عضویت رخ داده است. لطفاً مجدداً تلاش کنید.")
 
-# راه‌اندازی ربات
 def main():
     application = (
         Application.builder()
         .token(BOT_TOKEN)
-        .concurrent_updates(True)  # فعال‌سازی پردازش غیرهمزمان
+        .concurrent_updates(True)
         .pool_timeout(100)
         .get_updates_http_version("1.1")
         .http_version("1.1")
