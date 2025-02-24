@@ -18,21 +18,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # اطلاعات بات و کانال‌ها
-BOT_TOKEN = os.getenv("BOT1_TOKEN", "").strip()
-STORAGE_CHANNEL = int(os.getenv("STORAGE_CHANNEL", "0").strip('"'))
+BOT_TOKEN = os.getenv("BOT1_TOKEN", "").strip()  
+STORAGE_CHANNEL = int(os.getenv("STORAGE_CHANNEL", "0").strip('"'))  
 REQUIRED_CHANNELS = os.getenv("REQUIRED_CHANNELS", "").split(",")
 salt = os.getenv("salt", "").strip()
 
+# Use the same salt and configuration as Bot 1
 hashids = Hashids(salt=salt, min_length=6)
 
 # تنظیمات محدودیت نرخ
 RATE_LIMIT = 20  # حداکثر ۲۰ پیام در دقیقه (مطابق محدودیت تلگرام)
 semaphore = asyncio.Semaphore(RATE_LIMIT // 2)  # کنترل همزمانی
 
+# ذخیره کاربران و محتواهای درخواست شده
+pending_verifications = {}
+
 def decode_movie_token(token: str) -> list:
     """Decode token into list of message IDs"""
-    return list(hashids.decode(token))
+    decoded = hashids.decode(token)
+    return list(decoded) if decoded else []
 
+# تابع بررسی عضویت کاربر
 async def get_unjoined_channels(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     unjoined_channels = []
     for channel in REQUIRED_CHANNELS:
@@ -45,11 +51,13 @@ async def get_unjoined_channels(user_id: int, context: ContextTypes.DEFAULT_TYPE
             unjoined_channels.append(channel)
     return unjoined_channels
 
+# تابع ایجاد دکمه‌های عضویت و تأیید
 def get_verification_menu(unjoined_channels):
     keyboard = [[InlineKeyboardButton(f"✅ عضویت در {ch}", url=f"https://t.me/{ch[1:]}")] for ch in unjoined_channels]
     keyboard.append([InlineKeyboardButton("🔄 بررسی مجدد عضویت", callback_data="verify")])
     return InlineKeyboardMarkup(keyboard)
 
+# ارسال محتوا با تلاش مجدد و مدیریت محدودیت نرخ
 async def send_with_retry(context, content_code, user_id):
     backoff = 1
     max_retries = 5
@@ -67,36 +75,36 @@ async def send_with_retry(context, content_code, user_id):
                 wait = int(str(e).split()[-2])
                 await asyncio.sleep(wait + backoff)
                 backoff *= 2
-            elif "message to forward not found" in str(e):
-                logger.error(f"Message {content_code} not found.")
-                return None
             else:
-                logger.error(f"Failed to send {content_code}: {e}")
-                return None
+                logger.error(f"ارسال ناموفق {content_code}: {e}")
+                break
     return None
 
+# ارسال محتوا به کاربر با تأخیر و کنترل محدودیت نرخ
 async def send_timed_messages(user_id: int, context: ContextTypes.DEFAULT_TYPE, content_codes: list):
-    sent_messages = []
-    for code in content_codes:
-        msg = await send_with_retry(context, code, user_id)
-        if msg:
-            sent_messages.append(msg)
-        await asyncio.sleep(0.5)
+    try:
+        tasks = [send_with_retry(context, code, user_id) for code in content_codes]
+        sent_messages = await asyncio.gather(*tasks)
+        sent_messages = [msg for msg in sent_messages if msg]
 
-    if not sent_messages:
-        await context.bot.send_message(user_id, "⚠️ خطا در ارسال محتوا")
-        return
-    
-    countdown = await context.bot.send_message(user_id, "⏳ این محتوا پس از 5 دقیقه حذف خواهد شد!")
-    await asyncio.sleep(300)
+        if not sent_messages:
+            await context.bot.send_message(user_id, "⚠️ خطا در ارسال محتوا")
+            return
 
-    for msg in sent_messages:
-        try:
-            await context.bot.delete_message(user_id, msg.message_id)
-        except:
-            pass
-    await countdown.delete()
+        countdown = await context.bot.send_message(user_id, "⏳ این محتوا پس از 5 دقیقه حذف خواهد شد!")
+        await asyncio.sleep(300)
 
+        # حذف پیام‌ها
+        for msg in sent_messages:
+            try: await context.bot.delete_message(user_id, msg.message_id)
+            except: pass
+        await countdown.delete()
+
+    except Exception as e:
+        logger.error(f"خطای کلی: {e}")
+        await context.bot.send_message(user_id, "⚠️ خطا در پردازش")
+
+# دستور /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     args = context.args if context.args else []
@@ -106,8 +114,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         for token in tokens:
             decoded_ids = decode_movie_token(token)
             content_codes.extend(str(id) for id in decoded_ids)
-    
-    logger.info(f"Decoded content IDs for user {user.id}: {content_codes}")
+
+    pending_verifications[user.id] = content_codes  # ذخیره درخواست‌های در انتظار
 
     try:
         unjoined_channels = await get_unjoined_channels(user.id, context)
@@ -126,13 +134,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.error(f"خطا در پردازش دستور /start برای کاربر {user.id}: {e}")
         await update.message.reply_text("⚠️ مشکلی رخ داده است. لطفاً دوباره تلاش کنید.")
 
+# بررسی عضویت از طریق دکمه تأیید
 async def verify_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     try:
         unjoined_channels = await get_unjoined_channels(query.from_user.id, context)
         if not unjoined_channels:
-            await query.edit_message_text("✅ عضویت شما تأیید شد! اکنون می‌توانید به محتوای رسانه‌ای دسترسی داشته باشید.")
+            await query.edit_message_text("✅ عضویت شما تأیید شد! اکنون محتوای درخواستی ارسال خواهد شد.")
+            if query.from_user.id in pending_verifications:
+                await send_timed_messages(query.from_user.id, context, pending_verifications.pop(query.from_user.id))
         else:
             await query.edit_message_text(
                 "⚠️ شما هنوز در تمام کانال‌ها عضو نشده‌اید. لطفاً ابتدا عضو شوید:",
@@ -141,7 +152,6 @@ async def verify_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     except Exception as e:
         logger.error(f"خطا در بررسی عضویت کاربر {query.from_user.id}: {e}")
         await query.edit_message_text("⚠️ مشکلی در بررسی عضویت رخ داده است. لطفاً مجدداً تلاش کنید.")
-
 def main():
     application = (
         Application.builder()
